@@ -75,33 +75,85 @@ public class GTOCutCorners {
         int count = 0;
         try {
             Class<?> mcC = Class.forName("net.minecraft.client.Minecraft");
+            
+            // 列出所有方法找getInstance
+            jlog("--- Minecraft methods returning Minecraft ---");
+            for (Method m : mcC.getDeclaredMethods())
+                if (Modifier.isStatic(m.getModifiers()) && m.getReturnType()==mcC && m.getParameterCount()==0)
+                    jlog("  static factory: " + m.getName());
+            // 列出所有字段
+            for (Field f : mcC.getDeclaredFields())
+                if (Modifier.isStatic(f.getModifiers()) && f.getType()==mcC)
+                    jlog("  static field: " + f.getName());
+
+            // 试用所有方法
             Object mc = null;
-            for (String s : new String[]{"getInstance","m_91087_"})
-                { try { mc = mcC.getMethod(s).invoke(null); jlog("mc:"+s); break; } catch (Exception e) { jlog("mc fail:"+s); } }
-            if (mc == null) for (String s : new String[]{"instance","f_90981_"})
-                { try { Field f = mcC.getDeclaredField(s); f.setAccessible(true); mc = f.get(null); jlog("mc field:"+s); break; } catch (Exception e) { jlog("mc field fail:"+s); } }
-            if (mc == null) { jlog("mc FAIL"); return 0; }
+            for (Method m : mcC.getDeclaredMethods())
+                if (Modifier.isStatic(m.getModifiers()) && m.getReturnType()==mcC && m.getParameterCount()==0)
+                    { try { mc=m.invoke(null); jlog("mc via: "+m.getName()); break; } catch(Exception e){} }
+            if (mc==null) for (Field f : mcC.getDeclaredFields())
+                if (Modifier.isStatic(f.getModifiers()) && f.getType()==mcC)
+                    { try { f.setAccessible(true); mc=f.get(null); jlog("mc via field: "+f.getName()); break; } catch(Exception e){} }
+            if (mc==null){ jlog("mc FAIL"); return 0; }
 
+            // 列出所有可能level的字段
+            jlog("--- Minecraft level candidates ---");
+            for (Field f : mcC.getDeclaredFields()) {
+                String tn = f.getType().getSimpleName();
+                if (tn.contains("Level") || tn.contains("ClientLevel")) jlog("  level candidate: "+f.getName()+" type="+f.getType().getName());
+            }
+
+            // 试用 - 必须精确匹配 ClientLevel, 不能用 LevelRenderer
             Object lvl = null;
-            for (String s : new String[]{"level","f_91073_"})
-                { try { Field f = mcC.getDeclaredField(s); f.setAccessible(true); lvl = f.get(mc); jlog("lvl:"+s); break; } catch (Exception e) { jlog("lvl fail:"+s); } }
-            if (lvl == null) { jlog("lvl FAIL"); return 0; }
+            for (Field f : mcC.getDeclaredFields()) {
+                String tn = f.getType().getSimpleName();
+                if (tn.equals("ClientLevel"))
+                    { try { f.setAccessible(true); lvl=f.get(mc); jlog("lvl via: "+f.getName()+" ("+f.getType().getName()+")"); break; } catch(Exception e){ jlog("lvl fail "+f.getName()+": "+e.getMessage()); } }
+            }
+            if (lvl==null){ jlog("lvl FAIL"); return 0; }
+            Class<?> lvlC = lvl.getClass();
 
+            // RecipeManager
+            jlog("--- RecipeManager methods ---");
             Object rm = null;
-            for (String s : new String[]{"getRecipeManager","m_9598_"})
-                { try { rm = lvl.getClass().getMethod(s).invoke(lvl); jlog("rm:"+s); break; } catch (Exception e) { jlog("rm fail:"+s); } }
-            if (rm == null) { jlog("rm FAIL"); return 0; }
+            for (Method m : lvlC.getDeclaredMethods())
+                if (m.getParameterCount()==0 && m.getReturnType().getSimpleName().contains("RecipeManager"))
+                    jlog("  rm candidate: "+m.getName()+" -> "+m.getReturnType().getSimpleName());
+            for (Method m : lvlC.getMethods())
+                if (m.getParameterCount()==0 && m.getReturnType().getSimpleName().contains("RecipeManager"))
+                    { try { rm=m.invoke(lvl); jlog("rm via: "+m.getName()); break; } catch(Exception e){ jlog("rm fail "+m.getName()+": "+e.getMessage()); } }
+            if (rm==null){ jlog("rm FAIL"); return 0; }
+            Class<?> rmC = rm.getClass();
 
+            // getRecipes
+            jlog("--- RM getRecipes candidates ---");
             Collection<?> all = null;
-            for (String s : new String[]{"getRecipes","m_44054_"})
-                { try { all = (Collection<?>) rm.getClass().getMethod(s).invoke(rm); jlog("recipes:"+s+" "+all.size()); break; } catch (Exception e) { jlog("recipes fail:"+s); } }
-            if (all == null) { jlog("recipes FAIL"); return 0; }
+            for (Method m : rmC.getDeclaredMethods())
+                if (m.getParameterCount()==0 && Collection.class.isAssignableFrom(m.getReturnType()))
+                    jlog("  recipes candidate: "+m.getName()+" -> "+m.getReturnType().getSimpleName());
+            for (Method m : rmC.getMethods())
+                if (m.getParameterCount()==0 && Collection.class.isAssignableFrom(m.getReturnType()))
+                    { try { all=(Collection<?>)m.invoke(rm); jlog("recipes via: "+m.getName()+" size="+all.size()); break; } catch(Exception e){ jlog("recipes fail "+m.getName()+": "+e.getMessage()); } }
+            if (all==null){ jlog("recipes FAIL"); return 0; }
 
-            for (Object r : all) {
-                if (r instanceof AbstractCookingRecipe) {
-                    nativeSetIntField(r, "cookingTime", 1); count++;
+            // cookingTime field
+            jlog("--- AbstractCookingRecipe fields ---");
+            Class<?> acrC = AbstractCookingRecipe.class;
+            Field ctF = null;
+            for (Field f : acrC.getDeclaredFields())
+                if (f.getType()==int.class) jlog("  int field: "+f.getName());
+            // 找cookingTime - 唯一int字段
+            for (Field f : acrC.getDeclaredFields()) {
+                if (f.getType()==int.class) {
+                    try { ctF=f; ctF.setAccessible(true); jlog("ct via: "+f.getName()); break; }
+                    catch(Exception e){ jlog("ct fail: "+f.getName()); }
                 }
             }
+            if (ctF==null){ jlog("ct FAIL"); return 0; }
+
+            for (Object r : all)
+                if (r instanceof AbstractCookingRecipe)
+                    { nativeSetIntField(r, ctF.getName(), 1); count++; }
             jlog("vanilla done: " + count);
         } catch (Exception e) { jlog("vanilla ERR: " + e); }
         return count;
