@@ -1,0 +1,12 @@
+build/
+.gradle/
+*.iml
+.idea/
+out/
+run/
+hs_err_*.log
+*.log
+*.dll
+cmake-build-*/
+libs/gtolib-1.0.jar
+libs/asm-*.jar
