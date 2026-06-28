@@ -4,7 +4,7 @@
  * 1. Drill classes: bipush 20 (MAX_PROGRESS) -> bipush 1
  * 2. ICustomRecipeLogicHolder machines: duration(N) -> duration(1)
  *    (sipush 400/600/6000, bipush 20 in createCustomRecipe -> sipush/bipush 1)
- * 3. RecipeLogic.setupRecipe: inject this.duration=1 at RETURN (fallback)
+ * 3. RecipeLogic.setupRecipe injection: REMOVED (harmed standard machines)
  * 4. Diag dump
  */
 
@@ -182,13 +182,12 @@ static void JNICALL jvmti_class_file_load_hook(
         if(matched)return;
     }
 
-    /* 2. RecipeLogic.setupRecipe injection */
-    if(strcmp(name,"com/gregtechceu/gtceu/api/machine/trait/RecipeLogic")!=0)return;
-    jvmti_log("=== RecipeLogic: setupRecipe injection ===");
-    ju1*pat=NULL;jint pl=patch_setup_recipe((const ju1*)data,dlen,&pat);
-    if(pat&&pl>0){ju1*jb;jvmtiError e=(*jt_env)->Allocate(jt_env,pl,&jb);if(e==JVMTI_ERROR_NONE){memcpy(jb,pat,pl);*ndlen=pl;*ndata=jb;
-        if(!g_hook_fired){g_cached_patched=(ju1*)malloc(pl);if(g_cached_patched){memcpy(g_cached_patched,pat,pl);g_cached_patched_len=pl;g_hook_fired=1;}}}
-        free(pat);}
+    /* 2. RecipeLogic.setupRecipe injection - REMOVED:
+ * This global injection harmed standard machines (boilers, heaters)
+ * while being ineffective for ICustomRecipeLogicHolder machines.
+ * All duration patching is handled per-class in sections 1 & 1b.
+ */
+    return;
 }
 
 /* ========== JVMTI init ========== */
@@ -206,11 +205,7 @@ static int init_jvmti(JavaVM*vm){
 /* ========== Redefine loaded ========== */
 static void redefine_loaded_classes(JNIEnv*env){
     if(!g_jvmti_ready)return;
-    jclass rl=(*env)->FindClass(env,"com/gregtechceu/gtceu/api/machine/trait/RecipeLogic");
-    if(rl){jvmtiError e=(*g_jvmti)->RetransformClasses(g_jvmti,1,&rl);jvmti_log("RL retransform: %s",e==JVMTI_ERROR_NONE?"OK":"FAIL");
-        if(g_hook_fired&&g_cached_patched){jvmtiClassDefinition def;def.klass=rl;def.class_byte_count=g_cached_patched_len;def.class_bytes=g_cached_patched;
-            e=(*g_jvmti)->RedefineClasses(g_jvmti,1,&def);jvmti_log("Redefine: %s",e==JVMTI_ERROR_NONE?"OK":"FAIL");}(*env)->DeleteLocalRef(env,rl);}
-    else(*env)->ExceptionClear(env);
+    /* RecipeLogic retransform removed */
     const char* drills[]={"com/gtocore/common/machine/trait/INFFluidDrillLogic","com/gtocore/common/machine/trait/AdvancedInfiniteDrillLogic","com/gregtechceu/gtceu/common/machine/trait/FluidDrillLogic",NULL};
     for(const char**d=drills;*d;d++){jclass c=(*env)->FindClass(env,*d);if(c){jvmtiError e=(*g_jvmti)->RetransformClasses(g_jvmti,1,&c);jvmti_log("Drill %s: %s",*d,e==JVMTI_ERROR_NONE?"OK":"FAIL");(*env)->DeleteLocalRef(env,c);}else(*env)->ExceptionClear(env);}
     const char* dur_targets[]={
