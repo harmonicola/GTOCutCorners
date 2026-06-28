@@ -81,6 +81,7 @@ public class GTOCutCorners {
     private static native int nativeWatchdogTick();
     private static native void nativeInitJVMTI();
     public static native void nativeDumpRecipeLogics();
+    public static native void nativeDiagnoseHeater();
 
     // ======================== 字段自动发现 ========================
     private static Object unsafeObj;
@@ -576,105 +577,8 @@ public class GTOCutCorners {
             // GT 配方 patch
             int massResult = 0;
             if (config.patchGT) {
-                // Diagnostic: dump HeaterMachine instance state
-                try {
-                    java.lang.reflect.Field levelsField = null;
-                    Class<?> cls = Class.forName("net.minecraftforge.server.ServerLifecycleHooks")
-                        .getMethod("getCurrentServer").invoke(null).getClass();
-                    while (cls != null && levelsField == null) {
-                        try { levelsField = cls.getDeclaredField("levels"); levelsField.setAccessible(true); }
-                        catch (Exception e) { cls = cls.getSuperclass(); }
-                    }
-                    if (levelsField != null) {
-                        var server = Class.forName("net.minecraftforge.server.ServerLifecycleHooks")
-                            .getMethod("getCurrentServer").invoke(null);
-                        java.util.Map<?,?> levelMap = (java.util.Map<?,?>) levelsField.get(server);
-                        int heaterCount = 0;
-                        for (Object lvl : levelMap.values()) {
-                            Object cs = lvl.getClass().getMethod("getChunkSource").invoke(lvl);
-                            for (Object chunk : (Iterable<?>) cs.getClass().getMethod("getChunks").invoke(cs)) {
-                                for (Object be : ((java.util.Map<?,?>) chunk.getClass()
-                                    .getMethod("getBlockEntities").invoke(chunk)).values()) {
-                                    String beCls = be.getClass().getSimpleName();
-                                    if (!beCls.contains("Heater")) continue;
-                                    try {
-                                        Object mm = be.getClass().getMethod("getMetaMachine").invoke(be);
-                                        if (mm == null) continue;
-                                        String mmCls = mm.getClass().getSimpleName();
-                                        Object rl = mm.getClass().getMethod("getRecipeLogic").invoke(mm);
-                                        Object rt = mm.getClass().getMethod("getRecipeType").invoke(mm);
-                                        jlog("DIAG HEATER[" + (++heaterCount) + "]: MM=" + mmCls
-                                            + " RL=" + (rl != null ? rl.getClass().getSimpleName() : "null")
-                                            + " RecipeType=" + rt);
-                                        if (rl != null) {
-                                            int dur = -1, prog = -1;
-                                            try {
-                                                Class<?> rlCls = rl.getClass();
-                                                while (rlCls != null) {
-                                                    try {
-                                                        java.lang.reflect.Field f = rlCls.getDeclaredField("duration");
-                                                        f.setAccessible(true); dur = f.getInt(rl); break;
-                                                    } catch (Exception e) { rlCls = rlCls.getSuperclass(); }
-                                                }
-                                                rlCls = rl.getClass();
-                                                while (rlCls != null) {
-                                                    try {
-                                                        java.lang.reflect.Field f = rlCls.getDeclaredField("progress");
-                                                        f.setAccessible(true); prog = f.getInt(rl); break;
-                                                    } catch (Exception e) { rlCls = rlCls.getSuperclass(); }
-                                                }
-                                            } catch (Exception e) { }
-                                            jlog("DIAG HEATER: dur=" + dur + " prog=" + prog
-                                                + " isWorking=" + rl.getClass().getMethod("isWorking").invoke(rl)
-                                                + " isActive=" + rl.getClass().getMethod("isActive").invoke(rl));
-                                            // Dump input item slots
-                                            try {
-                                                Object itemHandler = mm.getClass().getMethod("getImportItems").invoke(mm);
-                                                if (itemHandler != null) {
-                                                    int slots = (int) itemHandler.getClass().getMethod("getSlots").invoke(itemHandler);
-                                                    jlog("DIAG HEATER: import slots=" + slots);
-                                                    for (int si = 0; si < slots; si++) {
-                                                        Object stack = itemHandler.getClass().getMethod("getStackInSlot", int.class).invoke(itemHandler, si);
-                                                        if (stack != null) {
-                                                            int count = (int) stack.getClass().getMethod("getCount").invoke(stack);
-                                                            if (count > 0) {
-                                                                jlog("DIAG HEATER: slot[" + si + "] = " + stack + " count=" + count);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            } catch (Exception e) { jlog("DIAG HEATER: item dump err: " + e.getMessage()); }
-                                            // Recipe matching check: does RecipeType have any recipe matching input?
-                                            try {
-                                                if (rt != null) {
-                                                    Object recipesMap = rt.getClass().getMethod("getRecipes").invoke(rt);
-                                                    if (recipesMap instanceof java.util.Map) {
-                                                        jlog("DIAG HEATER: RecipeType has " + ((java.util.Map<?,?>)recipesMap).size() + " recipes");
-                                                        int shown = 0;
-                                                        for (var entry : ((java.util.Map<?,?>)recipesMap).entrySet()) {
-                                                            if (shown++ >= 5) break;
-                                                            jlog("DIAG HEATER: recipe[" + entry.getKey() + "] = " + entry.getValue());
-                                                        }
-                                                    }
-                                                }
-                                            } catch (Exception e) { jlog("DIAG HEATER: recipe match err: " + e.getMessage()); }
-                                            // Try dump what recipe type the RL actually searches
-                                            try {
-                                                Object lastRecipe = rl.getClass().getMethod("getLastRecipe").invoke(rl);
-                                                jlog("DIAG HEATER: lastRecipe=" + lastRecipe);
-                                            } catch (Exception e) { }
-                                        }
-                                    } catch (Exception e) {
-                                        jlog("DIAG HEATER err: " + e.getMessage());
-                                    }
-                                }
-                            }
-                        }
-                        jlog("DIAG HEATER: total found=" + heaterCount);
-                    }
-                } catch (Throwable t) {
-                    jlog("DIAG HEATER error: " + t.getMessage());
-                }
+                // Native HeaterMachine diagnosis
+                try { nativeDiagnoseHeater(); } catch (Throwable t) { jlog("nativeDiagnoseHeater failed: " + t.getMessage()); }
                 Collection<GTRecipeDefinition> recipes = getRecipeCollection();
                 jlog("Got " + recipes.size() + " GT recipes");
                 vlog("GT", "getRecipeCollection returned %d GT recipes", recipes.size());
