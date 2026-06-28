@@ -498,7 +498,7 @@ static jobject collectAllViaTypeFields(JNIEnv *e) {
 
 JNIEXPORT jobject JNICALL Java_com_gtocutcorners_GTOCutCorners_getRecipeCollection
     (JNIEnv *e, jclass cls) {
-    lf = fopen("gtocutcorners_native.log", "w");
+    lf = fopen("gtocutcorners_native.log", "a");
     L("[NATIVE] getRecipeCollection via GTRegistries...");
     jobject coll = collectAllRecipes(e);
     if (coll != NULL) {
@@ -534,7 +534,7 @@ JNIEXPORT jint JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeSetIntField
 
 JNIEXPORT jint JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeMassPatch
     (JNIEnv *e, jclass cls, jboolean clearConditions) {
-    lf = fopen("gtocutcorners_native.log", "w");
+    lf = fopen("gtocutcorners_native.log", "a");
     L("[NATIVE] Mass patch via GTRegistries...");
     jobject coll = collectAllRecipes(e);
     if (coll != NULL) {
@@ -705,11 +705,14 @@ JNIEXPORT jint JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeMassPatch
  * Watchdog v2: lightweight linked-list based.
  * RecipeLogicMixin calls nativeRegisterRecipeLogic at construction
  * and nativeUnregisterRecipeLogic at unload. The watchdog thread
-/* =================================================================
- * HeaterMachine diagnostic: dump instance state via JNI
  * ================================================================= */
+
+// =================================================================
+// HeaterMachine diagnostic: dump instance state via JNI
+// =================================================================
 JNIEXPORT void JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeDiagnoseHeater
     (JNIEnv *e, jclass cls) {
+    char buf[512];
     lf = fopen("gtocutcorners_native.log", "a");
     L("[DIAG] === HeaterMachine native diagnosis ===");
 
@@ -925,6 +928,7 @@ JNIEXPORT void JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeDiagnoseHeater
     fclose(lf);
 }
 
+/* =================================================================
  * only iterates registered instances -- no world/chunk scanning.
  * ================================================================= */
 
