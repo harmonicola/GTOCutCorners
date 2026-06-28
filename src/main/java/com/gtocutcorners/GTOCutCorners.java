@@ -627,7 +627,38 @@ public class GTOCutCorners {
                                             jlog("DIAG HEATER: dur=" + dur + " prog=" + prog
                                                 + " isWorking=" + rl.getClass().getMethod("isWorking").invoke(rl)
                                                 + " isActive=" + rl.getClass().getMethod("isActive").invoke(rl));
-                                            // Try to dump what recipe type the RL actually searches
+                                            // Dump input item slots
+                                            try {
+                                                Object itemHandler = mm.getClass().getMethod("getImportItems").invoke(mm);
+                                                if (itemHandler != null) {
+                                                    int slots = (int) itemHandler.getClass().getMethod("getSlots").invoke(itemHandler);
+                                                    jlog("DIAG HEATER: import slots=" + slots);
+                                                    for (int si = 0; si < slots; si++) {
+                                                        Object stack = itemHandler.getClass().getMethod("getStackInSlot", int.class).invoke(itemHandler, si);
+                                                        if (stack != null) {
+                                                            int count = (int) stack.getClass().getMethod("getCount").invoke(stack);
+                                                            if (count > 0) {
+                                                                jlog("DIAG HEATER: slot[" + si + "] = " + stack + " count=" + count);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } catch (Exception e) { jlog("DIAG HEATER: item dump err: " + e.getMessage()); }
+                                            // Recipe matching check: does RecipeType have any recipe matching input?
+                                            try {
+                                                if (rt != null) {
+                                                    Object recipesMap = rt.getClass().getMethod("getRecipes").invoke(rt);
+                                                    if (recipesMap instanceof java.util.Map) {
+                                                        jlog("DIAG HEATER: RecipeType has " + ((java.util.Map<?,?>)recipesMap).size() + " recipes");
+                                                        int shown = 0;
+                                                        for (var entry : ((java.util.Map<?,?>)recipesMap).entrySet()) {
+                                                            if (shown++ >= 5) break;
+                                                            jlog("DIAG HEATER: recipe[" + entry.getKey() + "] = " + entry.getValue());
+                                                        }
+                                                    }
+                                                }
+                                            } catch (Exception e) { jlog("DIAG HEATER: recipe match err: " + e.getMessage()); }
+                                            // Try dump what recipe type the RL actually searches
                                             try {
                                                 Object lastRecipe = rl.getClass().getMethod("getLastRecipe").invoke(rl);
                                                 jlog("DIAG HEATER: lastRecipe=" + lastRecipe);
