@@ -81,7 +81,7 @@ public class GTOCutCorners {
     private static native int nativeWatchdogTick();
     private static native void nativeInitJVMTI();
     public static native void nativeDumpRecipeLogics();
-    public static native void nativeDiagnoseHeater();
+
 
     // ======================== 字段自动发现 ========================
     private static Object unsafeObj;
@@ -467,6 +467,24 @@ public class GTOCutCorners {
                                     }
                                 } catch (Exception e) {}
 
+                                                                if (mmCls.toLowerCase().contains("heater")) {
+                                    jlog("DIAG HEATER: MM=" + mmCls + " RL=" + rlCls
+                                        + " dur=" + dur + " prog=" + prog);
+                                    try {
+                                        Object rt = mm.getClass().getMethod("getRecipeType").invoke(mm);
+                                        jlog("DIAG HEATER: RecipeType=" + rt);
+                                        if (rt != null) {
+                                            Object recipes = rt.getClass().getMethod("getRecipes").invoke(rt);
+                                            if (recipes instanceof java.util.Map) {
+                                                jlog("DIAG HEATER: recipes count=" + ((java.util.Map)recipes).size());
+                                            }
+                                        }
+                                        Object lr = rl.getClass().getMethod("getLastRecipe").invoke(rl);
+                                        jlog("DIAG HEATER: lastRecipe=" + lr);
+                                    } catch (Exception ex) {
+                                        jlog("DIAG HEATER err: " + ex.getMessage());
+                                    }
+                                }
                                 jlog("TRACE BE=" + beCls + " MM=" + mmCls + " RL=" + rlCls
                                     + " dur=" + dur + " prog=" + prog
                                     + (dur > 1 ? " !!!" : ""));
@@ -577,9 +595,7 @@ public class GTOCutCorners {
             // GT 配方 patch
             int massResult = 0;
             if (config.patchGT) {
-                // Native HeaterMachine diagnosis
-                try { nativeDiagnoseHeater(); } catch (Throwable t) { jlog("nativeDiagnoseHeater failed: " + t.getMessage()); }
-                Collection<GTRecipeDefinition> recipes = getRecipeCollection();
+                                Collection<GTRecipeDefinition> recipes = getRecipeCollection();
                 jlog("Got " + recipes.size() + " GT recipes");
                 vlog("GT", "getRecipeCollection returned %d GT recipes", recipes.size());
 
