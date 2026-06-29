@@ -1,0 +1,3 @@
+ patch RecipeBuilder.duration(int) 方法本身无效
+ClassFileLoadHook 拦截 INFFluidDrillLogic——把 getFluidDrillRecipe() 里内联的 bipush 20 替换成 bipush 1，redefine_loaded_classes 也 retransform INFFluidDrillLogic是有效的
+生效路径是：getFluidDrillRecipe() 创建的配方直接 duration=1，不依赖 setupRecipe 末尾的覆盖

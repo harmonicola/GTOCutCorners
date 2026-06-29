@@ -44,6 +44,7 @@ dependencies {
     implementation fg.deobf(files('libs/gtolib-1.0.jar'))
     implementation fg.deobf(files('libs/gtocore-0.5.6-pre2.jar'))
     implementation fg.deobf(files('libs/gtceu-1.20.1-1.8.0.jar'))
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 }
 
 tasks.named('processResources', ProcessResources).configure {
@@ -68,42 +69,11 @@ tasks.named('jar', Jar).configure {
                 'Implementation-Title'    : project.name,
                 'Implementation-Version'  : project.jar.archiveVersion,
                 'Implementation-Vendor'   : mod_authors,
-                'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+                'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
         ])
     }
     finalizedBy 'reobfJar'
 }
-
-// Agent fat JAR - 用本地 ASM jar 打包
-task agentJar(type: Jar) {
-    archiveBaseName = 'gtocutcorners-agent'
-    archiveVersion = ''
-
-    from(sourceSets.main.output) {
-        include 'com/gtocutcorners/agent/**'
-    }
-
-    from(zipTree(file('libs/asm-9.7.jar'))) {
-        exclude 'META-INF/**', 'module-info.class'
-    }
-    from(zipTree(file('libs/asm-tree-9.7.jar'))) {
-        exclude 'META-INF/**', 'module-info.class'
-    }
-
-    manifest {
-        attributes 'Premain-Class': 'com.gtocutcorners.agent.RecipeAgent'
-        attributes 'Can-Redefine-Classes': 'true'
-        attributes 'Can-Retransform-Classes': 'true'
-    }
-
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-
-
-// ============================================================
-// 构建时修补 GTOCore JAR - 字节码改 sipush 600 -> iconst_1
-// ============================================================
 
 
 publishing {

@@ -3,7 +3,9 @@
   "package": "com.gtocutcorners.mixin",
   "compatibilityLevel": "JAVA_17",
   "refmap": "gtocutcorners.refmap.json",
-  "mixins": [],
+  "mixins": [
+    "RecipeLogicMixin"
+  ],
   "client": [],
   "server": []
 }

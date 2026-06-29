@@ -8,5 +8,8 @@ hs_err_*.log
 *.log
 *.dll
 cmake-build-*/
-libs/gtolib-1.0.jar
-libs/asm-*.jar
+libs/*.jar
+.codegraph/
+*.tmp
+*_dump.txt
+callchain_filtered.txt
