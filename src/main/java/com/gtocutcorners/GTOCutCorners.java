@@ -27,12 +27,17 @@ public class GTOCutCorners {
     private static boolean vLogOk = false;
 
     static {
-        try { fw = new FileWriter("gtocutcorners_java.log", true); }
-        catch (Exception e) { System.err.println("[GTO] Cannot init log: " + e); }
+        try {
+            fw = new FileWriter("gtocutcorners_java.log", true);
+        } catch (Exception e) {
+            System.err.println("[GTO] Cannot init log: " + e);
+        }
         try {
             vfw = new FileWriter("gtocutcorners_vanilla_patch.log", false);
             vLogOk = true;
-        } catch (Exception e) { System.err.println("[GTO] Cannot init vanilla log: " + e); }
+        } catch (Exception e) {
+            System.err.println("[GTO] Cannot init vanilla log: " + e);
+        }
     }
 
     public GTOCutCorners() {
@@ -44,7 +49,9 @@ public class GTOCutCorners {
 
     @SubscribeEvent
     public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
         ServerLevel level = player.serverLevel();
         new Thread(() -> loadAndPatch(level), "GTOCutCorners-Patcher").start();
     }
@@ -54,17 +61,33 @@ public class GTOCutCorners {
         String line = "[GTO] " + msg + "\n";
         System.out.print(line);
         if (fw == null) {
-            try { fw = new FileWriter("gtocutcorners_java.log", true); } catch (Exception e) {}
+            try {
+                fw = new FileWriter("gtocutcorners_java.log", true);
+            } catch (Exception ignored) {
+            }
         }
-        if (fw != null) { try { fw.write(line); fw.flush(); } catch (Exception ignored) {} }
+        if (fw != null) {
+            try {
+                fw.write(line);
+                fw.flush();
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     /** 原版配方专项日志 */
     private static synchronized void vlog(String tag, String msg) {
-        if (!vLogOk) return;
+        if (!vLogOk) {
+            return;
+        }
         String line = String.format("[%s] %s\n", tag, msg);
-        try { vfw.write(line); vfw.flush(); } catch (Exception ignored) {}
+        try {
+            vfw.write(line);
+            vfw.flush();
+        } catch (Exception ignored) {
+        }
     }
+
     private static void vlog(String tag, String fmt, Object... args) {
         vlog(tag, String.format(fmt, args));
     }
@@ -113,7 +136,8 @@ public class GTOCutCorners {
                         vlog("FIELD", "name match: '%s' in %s", name, cls.getSimpleName());
                         return;
                     }
-                } catch (NoSuchFieldException ignored) {}
+                } catch (NoSuchFieldException ignored) {
+                }
             }
             cls = cls.getSuperclass();
         }
@@ -128,7 +152,9 @@ public class GTOCutCorners {
      * 需要至少一条真实配方作为样本。
      */
     private static void discoverFieldByValue(AbstractCookingRecipe sample) {
-        if (cookingTimeField != null || !needRuntimeDiscovery) return;
+        if (cookingTimeField != null || !needRuntimeDiscovery) {
+            return;
+        }
 
         int expected = sample.getCookingTime();
         jlog("discoverFieldByValue: sample=" + sample.getId() + " getCookingTime()=" + expected);
@@ -190,7 +216,9 @@ public class GTOCutCorners {
      * Unsafe 初始化。先走候选名，全失败则标记运行时发现。
      */
     private static void ensureUnsafe() {
-        if (unsafeTried) return;
+        if (unsafeTried) {
+            return;
+        }
         unsafeTried = true;
 
         tryNameCandidates();
@@ -203,7 +231,9 @@ public class GTOCutCorners {
 
     /** 在字段已定位后尝试初始化 Unsafe */
     private static void tryInitUnsafe() {
-        if (unsafeOk || cookingTimeField == null) return;
+        if (unsafeOk || cookingTimeField == null) {
+            return;
+        }
         try {
             Class<?> uc = Class.forName("sun.misc.Unsafe");
             Field uf = uc.getDeclaredField("theUnsafe");
@@ -230,7 +260,9 @@ public class GTOCutCorners {
             }
         }
 
-        if (cookingTimeField == null) return false;
+        if (cookingTimeField == null) {
+            return false;
+        }
         try {
             if (unsafeOk && unsafeObj != null) {
                 Method putInt = unsafeObj.getClass().getMethod("putInt", Object.class, long.class, int.class);
@@ -261,15 +293,27 @@ public class GTOCutCorners {
                 if (r.recipeType != null) {
                     String tn = r.recipeType.toString().toLowerCase();
                     boolean isGen = false;
-                    for (String kw : GENS) { if (tn.contains(kw)) { isGen = true; break; } }
-                    if (isGen) { skipped++; continue; }
+                    for (String kw : GENS) {
+                        if (tn.contains(kw)) {
+                            isGen = true;
+                            break;
+                        }
+                    }
+                    if (isGen) {
+                        skipped++;
+                        continue;
+                    }
                 }
                 int old = nativeSetIntField(r, "duration", 1);
                 count++;
-                if (count <= 10) jlog("  #" + count + " " + r.id + " " + old + "->1");
+                if (count <= 10) {
+                    jlog("  #" + count + " " + r.id + " " + old + "->1");
+                }
             } catch (Exception e) {
                 errors++;
-                if (errors <= 10) jlog("  ERR " + r.id + ": " + e.getMessage());
+                if (errors <= 10) {
+                    jlog("  ERR " + r.id + ": " + e.getMessage());
+                }
             }
             long now = System.currentTimeMillis();
             if (now - lastLog > 5000) {
@@ -277,7 +321,8 @@ public class GTOCutCorners {
                 lastLog = now;
             }
         }
-        jlog("patchGT done: " + count + " patched " + skipped + " skipped " + errors + " errors " + (System.currentTimeMillis()-start) + "ms");
+        jlog("patchGT done: " + count + " patched " + skipped + " skipped " + errors + " errors "
+            + (System.currentTimeMillis() - start) + "ms");
         return count;
     }
 
@@ -292,7 +337,8 @@ public class GTOCutCorners {
                     nativeSetObjectField(r, "conditions", emptyArr);
                     count++;
                 }
-            } catch (Exception e) {}
+            } catch (Exception ignored) {
+            }
         }
         jlog("bypassConditions: " + count + " recipes cleared");
         return count;
