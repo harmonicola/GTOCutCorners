@@ -1,8 +1,6 @@
 # GTOCutCorners
 
-> GregTech Odyssey 附属模组——在 GT 硬核体系里"抄近道"。
-
-将 GTCEu 中所有非发电机配方的处理时长缩短至 **1 tick**，专为 [GTOCore](https://github.com/GregTech-Odyssey/GTOCore) 整合包设计。
+[GTOCore](https://github.com/GregTech-Odyssey/GTOCore) 附属模组，将 GTCEu 中所有非发电机配方的处理时长缩短至 **1 tick**。
 
 ---
 
