@@ -14,6 +14,8 @@ public class GTOConfig {
     public boolean clearConditions = true;
     public boolean patchVanilla = true;
     public boolean patchGT = true;
+    /** 0 = 1-tick (hyperclock via JVMTI). >0 = multiply recipe/vanilla durations. 1.0 = normal speed, 0.5 = 2x, 2.0 = half. */
+    public float durationMultiplier = 0.0f;
 
     public static GTOConfig load() {
         GTOConfig cfg = new GTOConfig();

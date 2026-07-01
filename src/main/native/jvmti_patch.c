@@ -25,6 +25,7 @@ static FILE* jvmti_lf = NULL;
 static ju1* g_cached_patched = NULL;
 static jint g_cached_patched_len = 0;
 static int g_hook_fired = 0;
+static int g_overclock_patch_active = 1;  /* 1=patch speed to 0.0 (1-tick), 0=leave speed at 1.0 (normal) */
 
 static void jvmti_log(const char* fmt, ...) {
     char buf[2048];va_list a;va_start(a,fmt);vsnprintf(buf,sizeof(buf),fmt,a);va_end(a);
@@ -191,6 +192,10 @@ static void JNICALL jvmti_class_file_load_hook(
      *   Single-byte change. No StackMapTable/attribute fixes needed.
      */
     if(strcmp(name,"com/gregtechceu/gtceu/api/recipe/modifier/RecipeModifier")==0){
+        if(!g_overclock_patch_active){
+            jvmti_log("=== RecipeModifier: hook fired but g_overclock_patch_active=0, skipping ===");
+            goto rm_skip;
+        }
         jvmti_log("=== RecipeModifier: hook fired ===");
         ju2 cc=rd_u2(data+8);int o=10;
         jvmti_log("RM: cp_count=%d dlen=%d",(int)cc,dlen);
@@ -277,6 +282,8 @@ static void JNICALL jvmti_class_file_load_hook(
         else jvmti_log("RM: patch OK, returning modified bytecode");
         if(rm_found)return;
     }
+rm_skip:
+    jvmti_log("RM: overclock patch disabled, class passed through unchanged");
 rm_done:
     if(strcmp(name,"com/gregtechceu/gtceu/api/recipe/modifier/RecipeModifier")==0)
         jvmti_log("RM: parse aborted (class format unexpected)");
@@ -287,6 +294,13 @@ rm_done:
  * All duration patching is handled per-class in sections 1 & 1b.
  */
     return;
+}
+
+/* ========== JNI: toggle overclock patch ========== */
+JNIEXPORT void JNICALL Java_com_gtocutcorners_GTOCutCorners_nativeSetOverclockPatchEnabled
+    (JNIEnv* env, jclass cls, jboolean enabled){
+    g_overclock_patch_active = enabled ? 1 : 0;
+    jvmti_log("nativeSetOverclockPatchEnabled: %s", enabled ? "ON (speed->0.0, 1-tick)" : "OFF (speed=1.0, normal)");
 }
 
 /* ========== JVMTI init ========== */

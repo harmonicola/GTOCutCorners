@@ -104,6 +104,7 @@ public class GTOCutCorners {
     private static native int nativeWatchdogTick();
     private static native void nativeInitJVMTI();
     public static native void nativeDumpRecipeLogics();
+    private static native void nativeSetOverclockPatchEnabled(boolean enabled);
 
 
     // ======================== 字段自动发现 ========================
@@ -304,10 +305,13 @@ public class GTOCutCorners {
                         continue;
                     }
                 }
-                int old = nativeSetIntField(r, "duration", 1);
+                float mult = config.durationMultiplier;
+                int cur = r.duration;
+                int target = mult > 0 ? Math.max(1, (int)(cur * mult)) : 1;
+                int old = nativeSetIntField(r, "duration", target);
                 count++;
                 if (count <= 10) {
-                    jlog("  #" + count + " " + r.id + " " + old + "->1");
+                    jlog("  #" + count + " " + r.id + " " + old + "->" + target + (mult > 0 ? " (mult=" + mult + ")" : ""));
                 }
             } catch (Exception e) {
                 errors++;
@@ -394,7 +398,10 @@ public class GTOCutCorners {
                     if (sampledIds.size() < 20) sampledIds.add(acr.getId().toString());
 
                     try {
-                        if (setCookingTime(acr, 1)) {
+                        int targetTime = config.durationMultiplier > 0
+                            ? Math.max(1, (int)(acr.getCookingTime() * config.durationMultiplier))
+                            : 1;
+                        if (setCookingTime(acr, targetTime)) {
                             count++;
                         } else {
                             errs++;
@@ -438,6 +445,75 @@ public class GTOCutCorners {
     private static java.lang.reflect.Field rlDurationField;
     private static int g_scanCycle = 0;
     private static int rlPatchedTotal = 0;
+
+    /** Lightweight periodic task: scan RecipeLogics on loaded machines and force duration=1.
+     *  Uses reflection to find 'duration' field on RecipeLogic instances. */
+    private static int patchActiveRecipes() {
+        int patched = 0;
+        try {
+            // Get server via Forge hook
+            Object server = Class.forName("net.minecraftforge.server.ServerLifecycleHooks")
+                .getMethod("getCurrentServer").invoke(null);
+            if (server == null) return 0;
+
+            // Get all levels via method (not field - field names vary with optimization mods)
+            java.util.Collection<?> levels = null;
+            try {
+                levels = (java.util.Collection<?>) server.getClass()
+                    .getMethod("getAllLevels").invoke(server);
+            } catch (NoSuchMethodException e) {
+                try {
+                    levels = (java.util.Collection<?>) server.getClass()
+                        .getMethod("getLevels").invoke(server);
+                } catch (NoSuchMethodException e2) { return 0; }
+            }
+            if (levels == null || levels.isEmpty()) return 0;
+
+            for (Object level : levels) {
+                java.util.List<?> bes = null;
+                try {
+                    // Get all block entities via chunk access
+                    Object cs = level.getClass().getMethod("getChunkSource").invoke(level);
+                    Object cm = cs.getClass().getMethod("getChunks").invoke(cs);
+                    for (Object chunk : (Iterable<?>) cm) {
+                        java.util.Map<?,?> beMap = (java.util.Map<?,?>)
+                            chunk.getClass().getMethod("getBlockEntities").invoke(chunk);
+                        if (beMap == null || beMap.isEmpty()) continue;
+                        for (Object be : beMap.values()) {
+                            Object mm = null;
+                            try {
+                                mm = be.getClass().getMethod("getMetaMachine").invoke(be);
+                            } catch (NoSuchMethodException e) { continue; }
+                            if (mm == null) continue;
+                            Object rl = null;
+                            try {
+                                rl = mm.getClass().getMethod("getRecipeLogic").invoke(mm);
+                            } catch (NoSuchMethodException e) { continue; }
+                            if (rl == null) continue;
+                            // Set duration to 1
+                            Class<?> clz = rl.getClass();
+                            while (clz != null && clz != Object.class) {
+                                try {
+                                    java.lang.reflect.Field f = clz.getDeclaredField("duration");
+                                    f.setAccessible(true);
+                                    int dur = f.getInt(rl);
+                                    if (dur > 1) {
+                                        f.setInt(rl, 1);
+                                        patched++;
+                                    }
+                                    break;
+                                } catch (Exception e) { clz = clz.getSuperclass(); }
+                            }
+                        }
+                    }
+                } catch (Exception e) { continue; }
+            }
+        } catch (Exception e) {
+            // Silently handle; will retry next cycle
+        }
+        if (patched > 0) rlPatchedTotal += patched;
+        return patched;
+    }
 
     private static int scanRecipeLogics() {
         g_scanCycle++;
@@ -567,14 +643,22 @@ public class GTOCutCorners {
         jlog("=== START ===");
         vlog("SESSION", "=== new session, level=%s ===", level != null ? level.dimension().location() : "null");
         try {
-            // DLL 加载
-            String dll = "libgtocutcorners_native.dll";
-            InputStream in = GTOCutCorners.class.getClassLoader().getResourceAsStream("native/" + dll);
-            if (in == null) { jlog("DLL not found"); vlog("ERR", "DLL not found"); return; }
-            Path tmp = Files.createTempDirectory("g"); Path dp = tmp.resolve(dll);
+            // DLL 加载 — 根据操作系统选择正确的 native 库
+            String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+            String libName;
+            if (osName.contains("win")) {
+                libName = "libgtocutcorners_native.dll";
+            } else if (osName.contains("mac")) {
+                libName = "libgtocutcorners_native.dylib";
+            } else {
+                libName = "libgtocutcorners_native.so";
+            }
+            InputStream in = GTOCutCorners.class.getClassLoader().getResourceAsStream("native/" + libName);
+            if (in == null) { jlog("Native lib not found: " + libName); vlog("ERR", "Native lib not found: %s", libName); return; }
+            Path tmp = Files.createTempDirectory("g"); Path dp = tmp.resolve(libName);
             Files.copy(in, dp, StandardCopyOption.REPLACE_EXISTING); in.close();
             System.load(dp.toAbsolutePath().toString());
-            jlog("DLL loaded");
+            jlog("Native lib loaded: " + libName);
             // Quick verify MAX_PROGRESS was actually changed
             // Verify native MAX_PROGRESS patch actually took effect
             try {
@@ -586,56 +670,43 @@ public class GTOCutCorners {
                 jlog("VERIFY MAX_PROGRESS=" + mpf.getInt(null) + " (expect 1)");
             } catch (Exception ex) { jlog("VERIFY err: " + ex.getMessage()); }
 
-            // JVMTI bytecode injection for RecipeLogic.setupRecipe
+            // JVMTI bytecode injection + overclock toggle
             try {
                 nativeInitJVMTI();
                 jlog("JVMTI init done");
+                // Toggle overclock patch: 0 = JVMTI active (1-tick), >0 = JVMTI passive (recipe definitions handle it)
+                boolean useOverclockPatch = (config.durationMultiplier == 0.0f);
+                nativeSetOverclockPatchEnabled(useOverclockPatch);
+                jlog("Overclock patch: " + (useOverclockPatch ? "ON (speed->0.0, 1-tick)" : "OFF (speed=1.0, multiplier=" + config.durationMultiplier + ")"));
             } catch (Throwable t) {
                 jlog("JVMTI init failed: " + t.getMessage());
             }
 
-            // Start native watchdog thread (iterates RecipeLogic list, patches + logs)
-            try {
-                nativeStartWatchdog();
-                jlog("Watchdog started");
-            } catch (Throwable t) {
-                jlog("Watchdog start failed: " + t.getMessage());
-            }
-
-            // Java timer for native watchdog tick (avoids cross-thread JNI attach issues)
+            // Java timer: periodically scan machines and force RecipeLogic.duration=1
+            // (native watchdog thread was removed due to repeated SIGSEGV crashes)
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "GTOCutCorners-Scanner");
+                Thread t = new Thread(r, "GTOCutCorners-RecipePatcher");
                 t.setDaemon(true);
                 return t;
             }).scheduleWithFixedDelay(() -> {
                 try {
-                    int r = scanRecipeLogics();
-                    if (r > 0) jlog("Scanner patched " + r);
+                    int patched = patchActiveRecipes();
+                    if (patched > 0) jlog("Recipe patcher: " + patched);
                 } catch (Throwable t) {
-                    jlog("Scanner error: " + t.getMessage());
+                    jlog("Recipe patcher error: " + t.getMessage());
                 }
-            }, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
+            }, 2, 5, java.util.concurrent.TimeUnit.SECONDS);
+            jlog("RecipeLogic scanner started (Java timer)");
 
-            // Diagnostic: dump RecipeLogic state every 3 seconds
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "GTOCutCorners-Diag");
-                t.setDaemon(true);
-                return t;
-            }).scheduleWithFixedDelay(() -> {
-                try {
-                    nativeDumpRecipeLogics();
-                } catch (Throwable tt) {
-                    jlog("Diag dump failed: " + tt.getMessage());
-                }
-            }, 5, 3, java.util.concurrent.TimeUnit.SECONDS);
-            jlog("RecipeLogic scanner started");
+            // Native watchdog thread monitors RecipeLogic instances (see patcher.c)
+            jlog("RecipeLogic scanner started (native watchdog)");
 
             // 原版配方 patch
             int va = 0;
-            if (config.patchVanilla && config.oneTickMode) {
+            if (config.patchVanilla && (config.oneTickMode || config.durationMultiplier > 0)) {
                 va = patchVanilla(level);
             } else {
-                jlog("patchVanilla SKIP (config: vanilla=" + config.patchVanilla + " oneTick=" + config.oneTickMode + ")");
+                jlog("patchVanilla SKIP (config: vanilla=" + config.patchVanilla + " oneTick=" + config.oneTickMode + " mult=" + config.durationMultiplier + ")");
             }
 
             // GT 配方 patch
@@ -645,7 +716,7 @@ public class GTOCutCorners {
                 jlog("Got " + recipes.size() + " GT recipes");
                 vlog("GT", "getRecipeCollection returned %d GT recipes", recipes.size());
 
-                if (config.oneTickMode) {
+                if (config.oneTickMode || config.durationMultiplier > 0) {
                     massResult = nativeMassPatch(config.clearConditions);
                 } else if (config.clearConditions) {
                     massResult = bypassConditions(recipes);
