@@ -13,6 +13,10 @@ import java.io.*;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.util.*;
+import com.gtocutcorners.fast.FastPatcher;
+import com.gtocutcorners.fast.FastScanner;
+import net.minecraft.server.MinecraftServer;
+
 
 @Mod(GTOCutCorners.MODID)
 public class GTOCutCorners {
@@ -20,6 +24,9 @@ public class GTOCutCorners {
 
     // ======================== 配置 ========================
     private static GTOConfig config = new GTOConfig();
+
+    /** true 时 Mixin 向 native 注册 RecipeLogic; false 时跳过 */
+    public static volatile boolean nativeModeActive = false;
 
     // ======================== 日志系统 ========================
     private static FileWriter fw;
@@ -42,8 +49,10 @@ public class GTOCutCorners {
 
     public GTOCutCorners() {
         config = GTOConfig.load();
+        nativeModeActive = config.oneTickMode;
         jlog("Config: oneTick=" + config.oneTickMode + " clearCond=" + config.clearConditions
-            + " vanilla=" + config.patchVanilla + " gt=" + config.patchGT);
+            + " vanilla=" + config.patchVanilla + " gt=" + config.patchGT
+            + " factor=" + config.durationFactor + " mode=" + (config.oneTickMode ? "NATIVE" : "FAST"));
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -639,100 +648,111 @@ public class GTOCutCorners {
     }
 
     // ======================== 主流程 ========================
-    private static void loadAndPatch(ServerLevel level) {
+        private static void loadAndPatch(ServerLevel level) {
         jlog("=== START ===");
         vlog("SESSION", "=== new session, level=%s ===", level != null ? level.dimension().location() : "null");
+
+        // ================================================================
+        // 模式选择: oneTickMode=true  -> GTOCutCorners 原生系统 (native+JVMTI)
+        //           oneTickMode=false -> GTOFast 纯 Java 倍率系统
+        // ================================================================
+        if (!config.oneTickMode) {
+        // ==================== 模式 B: 倍率模式 (纯 Java) ====================
+        jlog("[MODE] FAST (multiplier mode, factor=" + config.durationFactor + ")");
         try {
-            // DLL 加载 — 根据操作系统选择正确的 native 库
-            String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
-            String libName;
-            if (osName.contains("win")) {
-                libName = "libgtocutcorners_native.dll";
-            } else if (osName.contains("mac")) {
-                libName = "libgtocutcorners_native.dylib";
-            } else {
-                libName = "libgtocutcorners_native.so";
-            }
-            InputStream in = GTOCutCorners.class.getClassLoader().getResourceAsStream("native/" + libName);
-            if (in == null) { jlog("Native lib not found: " + libName); vlog("ERR", "Native lib not found: %s", libName); return; }
-            Path tmp = Files.createTempDirectory("g"); Path dp = tmp.resolve(libName);
-            Files.copy(in, dp, StandardCopyOption.REPLACE_EXISTING); in.close();
-            System.load(dp.toAbsolutePath().toString());
-            jlog("Native lib loaded: " + libName);
-            // Quick verify MAX_PROGRESS was actually changed
-            // Verify native MAX_PROGRESS patch actually took effect
-            try {
-                java.lang.reflect.Field mpf = Class.forName("com.gtocore.common.machine.trait.INFFluidDrillLogic").getDeclaredField("MAX_PROGRESS");
-                mpf.setAccessible(true);
-                java.lang.reflect.Field mods = java.lang.reflect.Field.class.getDeclaredField("modifiers");
-                mods.setAccessible(true);
-                mods.setInt(mpf, mpf.getModifiers() & ~java.lang.reflect.Modifier.FINAL);
-                jlog("VERIFY MAX_PROGRESS=" + mpf.getInt(null) + " (expect 1)");
-            } catch (Exception ex) { jlog("VERIFY err: " + ex.getMessage()); }
-
-            // JVMTI bytecode injection + overclock toggle
-            try {
-                nativeInitJVMTI();
-                jlog("JVMTI init done");
-                // Toggle overclock patch: 0 = JVMTI active (1-tick), >0 = JVMTI passive (recipe definitions handle it)
-                boolean useOverclockPatch = (config.durationMultiplier == 0.0f);
-                nativeSetOverclockPatchEnabled(useOverclockPatch);
-                jlog("Overclock patch: " + (useOverclockPatch ? "ON (speed->0.0, 1-tick)" : "OFF (speed=1.0, multiplier=" + config.durationMultiplier + ")"));
-            } catch (Throwable t) {
-                jlog("JVMTI init failed: " + t.getMessage());
-            }
-
-            // Java timer: periodically scan machines and force RecipeLogic.duration=1
-            // (native watchdog thread was removed due to repeated SIGSEGV crashes)
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "GTOCutCorners-RecipePatcher");
-                t.setDaemon(true);
-                return t;
-            }).scheduleWithFixedDelay(() -> {
-                try {
-                    int patched = patchActiveRecipes();
-                    if (patched > 0) jlog("Recipe patcher: " + patched);
-                } catch (Throwable t) {
-                    jlog("Recipe patcher error: " + t.getMessage());
-                }
-            }, 2, 5, java.util.concurrent.TimeUnit.SECONDS);
-            jlog("RecipeLogic scanner started (Java timer)");
-
-            // Native watchdog thread monitors RecipeLogic instances (see patcher.c)
-            jlog("RecipeLogic scanner started (native watchdog)");
-
-            // 原版配方 patch
-            int va = 0;
-            if (config.patchVanilla && (config.oneTickMode || config.durationMultiplier > 0)) {
-                va = patchVanilla(level);
-            } else {
-                jlog("patchVanilla SKIP (config: vanilla=" + config.patchVanilla + " oneTick=" + config.oneTickMode + " mult=" + config.durationMultiplier + ")");
-            }
-
-            // GT 配方 patch
-            int massResult = 0;
-            if (config.patchGT) {
-                                Collection<GTRecipeDefinition> recipes = getRecipeCollection();
-                jlog("Got " + recipes.size() + " GT recipes");
-                vlog("GT", "getRecipeCollection returned %d GT recipes", recipes.size());
-
-                if (config.oneTickMode || config.durationMultiplier > 0) {
-                    massResult = nativeMassPatch(config.clearConditions);
-                } else if (config.clearConditions) {
-                    massResult = bypassConditions(recipes);
-                }
-                jlog("nativeMassPatch: " + massResult + " conditions replaced");
-                vlog("GT", "nativeMassPatch result=%d", massResult);
-            } else {
-                jlog("GT patch SKIP (config: patchGT=false)");
-            }
-
-            jlog("=== DONE MassPatch=" + massResult + " Vanilla=" + va + " ===");
-            vlog("SESSION", "=== done: GT=%d  Vanilla=%d ===", massResult, va);
-        } catch (Throwable t) {
-            jlog("FATAL: " + t);
-            vlog("FATAL", "%s", t.toString());
-            for (StackTraceElement s : t.getStackTrace()) { jlog("  " + s); vlog("FATAL", "  at %s", s); }
+        MinecraftServer server = level.getServer();
+        if (server == null) { jlog("[Fast] Server is null, abort"); return; }
+        FastPatcher.patchGTRecipes(server);
+        FastPatcher.patchVanillaRecipes(server);
+        double factor = config.durationFactor;
+        if (factor <= 0.0 || (factor > 0.0 && factor != 1.0)) {
+        FastScanner.start(server);
+        } else {
+        FastScanner.stop();
         }
-    }
-}
+        jlog("=== FAST DONE ===");
+        } catch (Throwable t) {
+        jlog("[Fast] FATAL: " + t);
+        for (StackTraceElement s : t.getStackTrace()) { jlog("  " + s); }
+        }
+        return;
+        }
+
+        // ==================== 模式 A: 原生 1-tick 模式 ====================
+        jlog("[MODE] NATIVE (1-tick mode, JVMTI + native C)");
+        try {
+        String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+        String libName;
+        if (osName.contains("win")) {
+        libName = "libgtocutcorners_native.dll";
+        } else if (osName.contains("mac")) {
+        libName = "libgtocutcorners_native.dylib";
+        } else {
+        libName = "libgtocutcorners_native.so";
+        }
+        InputStream in = GTOCutCorners.class.getClassLoader().getResourceAsStream("native/" + libName);
+        if (in == null) { jlog("Native lib not found: " + libName); vlog("ERR", "Native lib not found: %s", libName); return; }
+        Path tmp = Files.createTempDirectory("g"); Path dp = tmp.resolve(libName);
+        Files.copy(in, dp, StandardCopyOption.REPLACE_EXISTING); in.close();
+        System.load(dp.toAbsolutePath().toString());
+        jlog("Native lib loaded: " + libName);
+        try {
+        java.lang.reflect.Field mpf = Class.forName("com.gtocore.common.machine.trait.INFFluidDrillLogic").getDeclaredField("MAX_PROGRESS");
+        mpf.setAccessible(true);
+        java.lang.reflect.Field mods = java.lang.reflect.Field.class.getDeclaredField("modifiers");
+        mods.setAccessible(true);
+        mods.setInt(mpf, mpf.getModifiers() & ~java.lang.reflect.Modifier.FINAL);
+        jlog("VERIFY MAX_PROGRESS=" + mpf.getInt(null) + " (expect 1)");
+        } catch (Exception ex) { jlog("VERIFY err: " + ex.getMessage()); }
+        try {
+        nativeInitJVMTI();
+        jlog("JVMTI init done");
+        boolean useOverclockPatch = (config.durationMultiplier == 0.0f);
+        nativeSetOverclockPatchEnabled(useOverclockPatch);
+        jlog("Overclock patch: " + (useOverclockPatch ? "ON (speed->0.0, 1-tick)" : "OFF (speed=1.0, multiplier=" + config.durationMultiplier + ")"));
+        } catch (Throwable t) {
+        jlog("JVMTI init failed: " + t.getMessage());
+        }
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "GTOCutCorners-RecipePatcher");
+        t.setDaemon(true);
+        return t;
+        }).scheduleWithFixedDelay(() -> {
+        try {
+        int patched = patchActiveRecipes();
+        if (patched > 0) jlog("Recipe patcher: " + patched);
+        } catch (Throwable t) {
+        jlog("Recipe patcher error: " + t.getMessage());
+        }
+        }, 2, 5, java.util.concurrent.TimeUnit.SECONDS);
+        jlog("RecipeLogic scanner started (Java timer)");
+        jlog("RecipeLogic scanner started (native watchdog)");
+        int va = 0;
+        if (config.patchVanilla) {
+        va = patchVanilla(level);
+        } else {
+        jlog("patchVanilla SKIP (config: vanilla=" + config.patchVanilla + ")");
+        }
+        int massResult = 0;
+        if (config.patchGT) {
+        Collection<GTRecipeDefinition> recipes = getRecipeCollection();
+        jlog("Got " + recipes.size() + " GT recipes");
+        vlog("GT", "getRecipeCollection returned %d GT recipes", recipes.size());
+        if (config.oneTickMode || config.durationMultiplier > 0) {
+        massResult = nativeMassPatch(config.clearConditions);
+        } else if (config.clearConditions) {
+        massResult = bypassConditions(recipes);
+        }
+        jlog("nativeMassPatch: " + massResult + " conditions replaced");
+        vlog("GT", "nativeMassPatch result=%d", massResult);
+        } else {
+        jlog("GT patch SKIP (config: patchGT=false)");
+        }
+        jlog("=== DONE MassPatch=" + massResult + " Vanilla=" + va + " ===");
+        vlog("SESSION", "=== done: GT=%d  Vanilla=%d ===", massResult, va);
+        } catch (Throwable t) {
+        jlog("FATAL: " + t);
+        vlog("FATAL", "%s", t.toString());
+        for (StackTraceElement s : t.getStackTrace()) { jlog("  " + s); vlog("FATAL", "  at %s", s); }
+        }
+    }}
