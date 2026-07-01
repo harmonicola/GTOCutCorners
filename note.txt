@@ -1,0 +1,45 @@
+ patch RecipeBuilder.duration(int) 方法本身无效
+ClassFileLoadHook 拦截 INFFluidDrillLogic——把 getFluidDrillRecipe() 里内联的 bipush 20 替换成 bipush 1，redefine_loaded_classes 也 retransform INFFluidDrillLogic是有效的
+生效路径是：getFluidDrillRecipe() 创建的配方直接 duration=1，不依赖 setupRecipe 末尾的覆盖
+电炉不生效
+理论1：在 loadAndPatch() 里，patchVanilla() 之后，强制让 FURNACE_RECIPES 重建 DB。因为此时原版 cookingTime 已经变成 1，重建后 duration = 1/4 → 1，失败，把 db 置空后，initDB() 的 lazy rebuild 失败了，直接调 initDB() 强制立即重建，失败，电炉恢复运行，但耗时没有变成1tick
+2：在 GTRecipeType 类加载时替换 toGTrecipe() 里的 iconst_4; idiv 为 pop; iconst_1，在 section 1b 和 section 2 之间加 GTRecipeType 的 JVMTI patch。同时在 redefine_loaded_classes 里也加上，这样已经加载的类也能被 retransform，
+第一层：Mixin
+src/main/java/.../mixin/GTRecipeTypeMixin.java
+
+拦截 GTRecipeType.toGTrecipe() 的 RETURN
+
+只要是 AbstractCookingRecipe 转来的，强制 GTRecipeDefinition.duration = 1
+
+第二层：Java DB 兜底
+GTOCutCorners.java — patchDBInternals()
+
+initDB() 重建后直接掏 RecipeDB.serialRecipes 列表
+
+遍历所有 GTRecipeDefinition，暴力写 duration = 1
+
+不依赖 Mixin，纯反射，Mixin 失效也能干活
+
+第三层：JVMTI 字节码
+jvmti_patch.c — section 1c
+
+GTRecipeType 类加载时拦截
+
+把 toGTrecipe() 里的 iconst_4; idiv（除以4）替换为 pop; iconst_1（丢掉结果、压入1）
+
+在 redefine_loaded_classes 里也加了 retransform，已加载的类照样生效
+
+gtocutcorners.mixins.json — 注册了 GTRecipeTypeMixin
+失败，显示修补字节码成功，但电炉燃烧时间还是没有变成1tick
+已清除此前失败方法
+待尝试：自己生成一份给电炉用的配方表，然后直接拦截电炉的工作逻辑，使得它读取我们的配方表
+终止，想到了更妙的方法，基本上所有GT机器，除了自定义配方机器都会走超频机制，它能修改几乎所有的实例的实际运行速度，“权限”很高，只要劫持超频机制，就算配方没变成1tick，实际运行起来仍然会被加速
+触发类: com/gregtechceu/gtceu/api/recipe/modifier/RecipeModifier
+目标方法: public static overclocking(IRecipeHandlerHolder, RecipeHandlerUnit, GTRecipe)
+补丁: code[5] 从 0x0F (dconst_1 = speed=1.0) → 0x0E (dconst_0 = speed=0.0)
+原理链路:
+speed=0.0
+  → 内层 duration = recipe.duration * 0.0 = 0.0
+  → if (duration <= 0) 分支
+  → recipe.duration = 1  (强设)
+成功
