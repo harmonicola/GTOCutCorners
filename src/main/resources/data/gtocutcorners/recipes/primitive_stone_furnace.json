@@ -1,0 +1,10 @@
+{
+  "type": "botania:mana_infusion",
+  "input": {
+    "item": "minecraft:furnace"
+  },
+  "mana": 1,
+  "output": {
+    "item": "gtocore:primitive_stone_furnace"
+  }
+}

@@ -1,0 +1,20 @@
+build/
+.gradle/
+*.iml
+.idea/
+out/
+run/
+hs_err_*.log
+*.log
+*.dll
+cmake-build-*/
+libs/*.jar
+.codegraph/
+*.tmp
+*_dump.txt
+callchain_filtered.txt
+
+# Development-only files (not required to compile)
+DEVELOPMENT_NOTES.md
+docs/
+tools/

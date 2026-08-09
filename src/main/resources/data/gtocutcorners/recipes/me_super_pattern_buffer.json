@@ -1,0 +1,10 @@
+{
+  "type": "botania:mana_infusion",
+  "input": {
+    "item": "minecraft:chest"
+  },
+  "mana": 200,
+  "output": {
+    "item": "gtocore:me_super_pattern_buffer"
+  }
+}
